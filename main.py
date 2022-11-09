@@ -1,90 +1,82 @@
-import  pandas as pd
-import  yfinance as yf
-import altair as alt
+#CAUTION YOU HAVE TO ADD YOUR COMPUTER VISION KEY AND ENDPOINT IN SECRET.JSON FILETO USE THIS APP
+
+from azure.cognitiveservices.vision.computervision import ComputerVisionClient
+from msrest.authentication import CognitiveServicesCredentials
+
+import os
+from PIL import Image
+from PIL import ImageDraw
+from PIL import  ImageFont
+import json
+
+with open('secret.json') as f:
+    secret = json.load(f)
+
+KEY = secret['KEY']
+ENDPOINT = secret['ENDPOINT']
+
+subscription_key = KEY
+endpoint = ENDPOINT
+computervision_client = ComputerVisionClient(endpoint, CognitiveServicesCredentials(subscription_key))
+
+
+#anylize image
+images_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
+
+def anylize_image(file_path):
+    local_image = open(file_path, "rb")
+    local_image_features = ["objects", "tags"]
+    return computervision_client.analyze_image_in_stream(local_image, local_image_features)
+
+def detect_objects(anylize):
+    objects = anylize.objects
+    return objects
+
+#append only tag.name to class <tags_name>
+def get_tags(anylize):
+    tags = anylize.tags
+    tags_name = []
+    for tag in tags:
+        tags_name.append(tag.name)
+    return tags_name
+
 import streamlit as st
 
+st.title('物体検出アプリ')
 
-st.title('米国株価可視化アプリ')
-st.sidebar.write("""
-#GAFA株価
-こちらは株価可視化ツールです。以下のオプションから表示日数を指定してください。
-""")
-st.sidebar.write("""
-##表示日数選択
-""")
-days = st.sidebar.slider('日数', 1, 50, 20)
+uploaded_file = st.file_uploader('Choose an image...', type=['jpg','png'])
 
-
-st.write(f"""
-### 過去 **{days}日間** のGAFA株価
-""")
+if uploaded_file is not None:
+    img = Image.open(uploaded_file)
+    img_path = f'img/{uploaded_file.name}'
+    img.save(img_path)
+    anylized_results = anylize_image(img_path)
+    objects = detect_objects(anylized_results)
 
 
-@st.cache
-def get_data(tickers, days):
-    df = pd.DataFrame()
-    for company in tickers.keys():
+    #描画
+    draw = ImageDraw.Draw(img)
+    for object in objects:
+        x = object.rectangle.x
+        y = object.rectangle.y
+        w = object.rectangle.w
+        h = object.rectangle.h
+        caption = object.object_property
 
-        tkr = yf.Ticker(tickers[company])
-        hist = tkr.history(period=f'{days}d')
-        hist.index = hist.index.strftime('%d %B %Y')
-        hist = hist[['Close']]
-        hist.columns = [company]
-        hist = hist.T
-        hist.index.name = 'Name'
-        df = pd.concat([df, hist])
-    return df
-
-try:
-    st.sidebar.write("""
-    ## 株価の範囲指定
-    """)
-    ymin, ymax = st.sidebar.slider(
-        '範囲を指定してください。', 0.0, 3500.0, (0.0, 3500.0)
-    )
+        font = ImageFont.truetype(font='./AmaticSC-Regular.ttf', size=50)
+        text_w, text_h = draw.textsize(caption, font=font)
 
 
-    tickers = {
-        'apple': 'AAPL',
-        'amazon': 'AMZN',
-        'google': 'GOOGL',
-        'meta': 'META',
-        'microsoft': 'MSFT',
-        'netflix': 'NFLX'
-    }
+        draw.rectangle([(x, y), (x+w, y+h)], fill=None, outline='green', width=5)
+        draw.rectangle([(x, y), (x+text_w, y+text_h)], fill='green', outline='green', width=5)
+        draw.text((x, y), caption, fill='white', font=font)
 
 
-    df = get_data(tickers, days)
+    st.image(img)
+    tags_name = get_tags((anylized_results))
+    tags_name = ', '.join(tags_name)
 
-    companies = st.multiselect(
-        '会社を選択してください。',
-        list(df.index),
-        ['google', 'amazon', 'meta', 'apple']
-    )
 
-    if not companies:
-        st.error('少なくとも一社は選択してください。')
-    else:
-        data = df.loc[companies]
-        st.write("### 株価(USD)",data.sort_index())
-        data = data.T.reset_index()
 
-        data = pd.melt(data, id_vars=["Date"]) .rename(
-            columns={"value": "Stock Prices(USD)"}
-        )
-
-        chart = (
-            alt.Chart(data)
-            .mark_line(clip=True)
-            .encode(
-                x="Date:T",
-                y=alt.Y("Stock Price(USD):Q",stack=None , scale=alt.Scale(domain=[ymin, ymax])),
-                color='Name:N'
-
-            )
-        )
-
-        st.altair_chart(chart, use_container_width=True)
-except:
-    st.error("""
-    おっと！エラーが起きているようです。""")
+    st.markdown('**認識されたコンテンツタグ**')
+    st.markdown(f'>{tags_name}')

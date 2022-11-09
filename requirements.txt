@@ -1,2 +1,2 @@
-yfinance== 0.1.85
-streamlit==1.11.0
+ComputerVisionClient
+CognitiveServicesCredentials
